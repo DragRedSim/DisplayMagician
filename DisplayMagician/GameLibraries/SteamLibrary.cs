@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -35,6 +35,7 @@ namespace DisplayMagician.GameLibraries
         private string _steamExe;
         private string _steamPath;
         private string _steamConfigVdfFile;
+        private string _steamLibFoldersVdfFile;
         private List<string> _steamProcessList = new List<string>() { "steam"};
         private string _registrySteamKey = @"SOFTWARE\WOW6432Node\Valve\Steam"; // under LocalMachine
         private string _registryAppsKey = $@"SOFTWARE\Valve\Steam\Apps"; // under CurrentUser
@@ -496,7 +497,7 @@ namespace DisplayMagician.GameLibraries
 
                 // Now we parse the steam appinfo.vdf to get access to things like:
                 // - The game name
-                // - THe game installation dir
+                // - The game installation dir
                 // - Sometimes the game icon
                 // - Sometimes the game executable name (from which we can get the icon)
                 Dictionary<string, SteamAppInfo> steamAppInfo = new Dictionary<string, SteamAppInfo>();
@@ -604,15 +605,19 @@ namespace DisplayMagician.GameLibraries
                     }
                 }
 
-
-
-
                 // Now we access the config.vdf that lives in the Steam Config file, as that lists all 
                 // the SteamLibraries. We need to find out where they areso we can interrogate them
                 _steamConfigVdfFile = Path.Combine(_steamPath, "config", "config.vdf");
                 string steamConfigVdfText = File.ReadAllText(_steamConfigVdfFile, Encoding.UTF8);
 
                 logger.Trace($"SteamLibrary/LoadInstalledGames: Processing the {_steamConfigVdfFile} VDF file");
+
+                // Now we access the libraryfolders.vdf that lives in the SteamApps directory, as that lists all 
+                // the SteamLibraries. We need to find out where they are so that we can search them.
+                _steamLibFoldersVdfFile = Path.Combine(_steamPath, "steamapps", "libraryfolders.vdf");
+                string steamLibFoldersVdfText = File.ReadAllText(_steamLibFoldersVdfFile, Encoding.UTF8);
+
+                logger.Trace($"SteamLibrary/LoadInstalledGames: Processing the {_steamLibFoldersVdfFile} VDF file");
 
                 List<string> steamLibrariesPaths = new List<string>();
                 // We add the default library which is based on where Steam was installed
@@ -625,6 +630,14 @@ namespace DisplayMagician.GameLibraries
                 Regex steamLibrariesRegex = new Regex(@"""BaseInstallFolder_\d+""\s+""(.*)""", RegexOptions.IgnoreCase);
                 // Try to match all lines against the Regex.
                 MatchCollection steamLibrariesMatches = steamLibrariesRegex.Matches(steamConfigVdfText);
+                
+                // Now we have to parse the libraryfolders.vdf looking for the location of any additional SteamLibraries
+                // We look for lines similar to this: "1"		"E:\\SteamLibrary"
+                // There may be multiple so we need to check the whole file
+                Regex steamLibFolderRegex = new Regex(@"""\d+""\s+""(.*)""", RegexOptions.IgnoreCase);
+                // Try to match all lines against the Regex.
+                MatchCollection steamLibFolderMatches = steamLibFolderRegex.Matches(steamLibFoldersVdfText);
+                
                 // If at least one of them matched!
                 foreach (Match steamLibraryMatch in steamLibrariesMatches)
                 {
@@ -635,6 +648,21 @@ namespace DisplayMagician.GameLibraries
                         steamLibrariesPaths.Add(steamLibraryPath);
                     }
                 }
+                
+                // If at least one of them matched!
+                foreach (Match steamLibraryMatch in steamLibFolderMatches)
+                {
+                    if (steamLibraryMatch.Success)
+                    { 
+                        string steamLibraryPath = Regex.Unescape(steamLibraryMatch.Groups[1].Value);
+                        logger.Info($"SteamLibrary/LoadInstalledGames: Found additional steam library {steamLibraryPath}");
+                        steamLibrariesPaths.Add(steamLibraryPath);
+                    }
+                }
+                
+                // In case information was stored in both files, we deduplicate the list.
+                steamLibrariesPaths = steamLibrariesPaths.Distinct().ToList();
+                
                 // Now we go off and find the details for the games in each Steam Library
                 foreach (string steamLibraryPath in steamLibrariesPaths)
                 {
@@ -736,19 +764,19 @@ namespace DisplayMagician.GameLibraries
             }
             catch (SecurityException ex)
             {
-                logger.Warn(ex, "SteamLibrary/GetAllInstalledGames: The user does not have the permissions required to read the Uplay InstallDir registry key.");
+                logger.Warn(ex, "SteamLibrary/GetAllInstalledGames: The user does not have the permissions required to read the Steam InstallDir registry key.");
             }
             catch (ObjectDisposedException ex)
             {
-                logger.Warn(ex, "SteamLibrary/GetAllInstalledGames: The Microsoft.Win32.RegistryKey is closed when trying to access the Uplay InstallDir registry key (closed keys cannot be accessed).");
+                logger.Warn(ex, "SteamLibrary/GetAllInstalledGames: The Microsoft.Win32.RegistryKey is closed when trying to access the Steam InstallDir registry key (closed keys cannot be accessed).");
             }
             catch (IOException ex)
             {
-                logger.Warn(ex, "SteamLibrary/GetAllInstalledGames: The Uplay InstallDir registry key has been marked for deletion so we cannot access the value dueing the UplayLibrary check.");
+                logger.Warn(ex, "SteamLibrary/GetAllInstalledGames: The Steam InstallDir registry key has been marked for deletion so we cannot access the value during the UplayLibrary check.");
             }
             catch (UnauthorizedAccessException ex)
             {
-                logger.Warn(ex, "SteamLibrary/GetAllInstalledGames: The user does not have the necessary registry rights to check whether Uplay is installed.");
+                logger.Warn(ex, "SteamLibrary/GetAllInstalledGames: The user does not have the necessary registry rights to check whether Steam is installed.");
             }
 
             return true;
